@@ -10,12 +10,31 @@
 
 set -euo pipefail
 
+# Debug log — traces every decision (defined before trap so trap can use it)
+DBGLOG=".claude/codex-ralph-hook.log"
+dbg() { echo "[$(date +%H:%M:%S)] $*" >> "$DBGLOG" 2>/dev/null || true; }
+
+trap 'echo "[$(date +%H:%M:%S)] ERROR at line $LINENO (exit $?)" >> "$DBGLOG" 2>/dev/null; exit 0' ERR
+
 HOOK_INPUT=$(cat)
+
+# cd to the project directory (hook may run from a different CWD when registered in settings.json)
+HOOK_CWD=$(echo "$HOOK_INPUT" | jq -r '.cwd // empty' 2>/dev/null || echo "")
+if [[ -n "$HOOK_CWD" ]] && [[ -d "$HOOK_CWD" ]]; then
+  cd "$HOOK_CWD"
+fi
+
+dbg "=== HOOK START ==="
+dbg "CWD: $(pwd)"
+dbg "INPUT: $(echo "$HOOK_INPUT" | head -c 200)"
+
 RALPH_STATE_FILE=".claude/codex-ralph.local.md"
 
 if [[ ! -f "$RALPH_STATE_FILE" ]]; then
+  dbg "EXIT: no state file"
   exit 0
 fi
+dbg "State file exists"
 
 # ── Parse frontmatter ───────────────────────────────────────
 FRONTMATTER=$(sed -n '/^---$/,/^---$/{ /^---$/d; p; }' "$RALPH_STATE_FILE")
@@ -108,7 +127,7 @@ Use your own judgment — fix genuine issues, note disagreements." \
 
   # Review file exists — check verdict
   if check_approval "$REVIEW_FILE"; then
-    echo "✅ codex-ralph: Codex APPROVED"
+    dbg "EXIT: APPROVED"; echo "✅ codex-ralph: Codex APPROVED"
     rm -f "$RALPH_STATE_FILE" "$RUNNER_FILE"
     exit 0
   fi
@@ -148,20 +167,17 @@ fi
 TRANSCRIPT_PATH=$(echo "$HOOK_INPUT" | jq -r '.transcript_path')
 
 if [[ ! -f "$TRANSCRIPT_PATH" ]]; then
-  echo "⚠️  codex-ralph: Transcript not found" >&2
-  rm "$RALPH_STATE_FILE"
+  dbg "EXIT: transcript not found"; echo "⚠️  codex-ralph: Transcript not found" >&2
   exit 0
 fi
 
 if ! grep -q '"role":"assistant"' "$TRANSCRIPT_PATH"; then
-  echo "⚠️  codex-ralph: No assistant messages in transcript" >&2
-  rm "$RALPH_STATE_FILE"
+  dbg "EXIT: no assistant messages"; echo "⚠️  codex-ralph: No assistant messages in transcript" >&2
   exit 0
 fi
 
 LAST_LINE=$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" | tail -1)
 if [[ -z "$LAST_LINE" ]]; then
-  rm "$RALPH_STATE_FILE"
   exit 0
 fi
 
@@ -171,7 +187,8 @@ JQ_EXIT=$?
 set -e
 
 if [[ $JQ_EXIT -ne 0 ]] || [[ -z "$LAST_OUTPUT" ]]; then
-  rm "$RALPH_STATE_FILE"
+  dbg "EXIT: jq empty or failed (exit=$JQ_EXIT) — keeping state file, approving exit"
+  # DON'T delete state file — this may be an early Stop event before Claude finished working
   exit 0
 fi
 
@@ -184,8 +201,9 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
 
   if [[ -n "$PROMISE_TEXT" ]] && [[ "$PROMISE_TEXT" = "$COMPLETION_PROMISE" ]]; then
     # Promise detected! But DON'T release yet — run Codex review first
-    echo "🔍 codex-ralph: Promise detected, running Codex review..."
+    dbg "PROMISE DETECTED: $PROMISE_TEXT"; echo "🔍 codex-ralph: Promise detected, running Codex review..."
 
+    dbg "Checking codex CLI..."
     # Check codex available
     if ! command -v codex &>/dev/null; then
       emit_block \
@@ -208,8 +226,10 @@ For each issue: [P1] Critical, [P2] Important, [P3] Minor, [P4] Nitpick.
 Output: Summary, Findings, Verdict (APPROVED or NEEDS_FIXES).
 Goals: 1) Task goal achieved? 2) Correct and complete? 3) Bugs/errors/gaps?"
 
+    dbg "Creating review files..."
     mkdir -p reviews
     printf '%s' "$REVIEW_PROMPT" > ".claude/codex-ralph-prompt-${REVIEW_ID}.txt"
+    dbg "Prompt written, generating runner..."
 
     # Generate runner script
     cat > "$RUNNER_FILE" << RUNNER_EOF
@@ -239,7 +259,9 @@ echo "Review saved to ${REVIEW_FILE}"
 RUNNER_EOF
     chmod +x "$RUNNER_FILE"
 
+    dbg "Runner script created, transitioning phase..."
     transition_phase "reviewing"
+    dbg "Phase transitioned, emitting block..."
 
     emit_block \
       "Codex review required. Run the review script (use 600000ms timeout):

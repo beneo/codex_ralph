@@ -1,5 +1,5 @@
 {
-  "description": "Ralph Wiggum plugin stop hook for self-referential loops",
+  "description": "codex-ralph Stop hook",
   "hooks": {
     "Stop": [
       {
