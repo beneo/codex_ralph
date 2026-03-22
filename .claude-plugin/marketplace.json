@@ -1,0 +1,16 @@
+{
+  "name": "codex-ralph-local",
+  "owner": {
+    "name": "sky4ucker"
+  },
+  "metadata": {
+    "description": "Fork of Ralph with Codex review gate — Claude Agent Team + Codex review loop"
+  },
+  "plugins": [
+    {
+      "name": "codex-ralph",
+      "source": "./plugins/codex-ralph",
+      "description": "Claude Agent Team implements, Codex reviews, loop until approved"
+    }
+  ]
+}

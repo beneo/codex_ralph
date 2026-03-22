@@ -1,0 +1,8 @@
+{
+  "name": "codex-ralph",
+  "version": "12.0.0",
+  "description": "Fork of ralph-wiggum with Codex review gate. Claude Agent Team implements + Codex (gpt-5.3-codex/xhigh) reviews, loop until approved.",
+  "author": {
+    "name": "sky4ucker"
+  }
+}
